@@ -18,7 +18,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      id-token: write   # This is required for requesting the JWT
+      id-token: write   # This is required for requesting the JWT, https://stackoverflow.com/a/78230041/554246
       contents: read
     steps:
     - uses: actions/checkout@v4
