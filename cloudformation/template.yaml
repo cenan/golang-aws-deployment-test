@@ -1,0 +1,76 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: 'Cloudformation for provisioning services required to setup the CI/CD using GitHub actions and CodeDeploy'
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: GitHub Configuration
+        Parameters:
+          - GithubRepoName
+          - ThumbprintList
+Parameters:
+  ThumbprintList:
+    Type: String
+    Default: 6938fd4d98bab03faadb97b34396831e3780aea1
+    Description: A thumbprint of an Open ID Connector is a SHA1 hash of the public certificate of the host
+  GithubRepoName:
+    Type: String 
+    Description: GitHub repository name in format "username/reponame" 
+Resources:
+  IDCProvider:
+      Type: AWS::IAM::OIDCProvider
+      Properties:
+          Url: "https://token.actions.githubusercontent.com"
+          ClientIdList:
+            - "sts.amazonaws.com"
+          ThumbprintList:
+             - !Ref ThumbprintList 
+  GitHubIAMRole:
+      Type: "AWS::IAM::Role"
+      Properties:
+          Path: "/"
+          RoleName: CodeDeployRoleforGitHub
+          AssumeRolePolicyDocument:
+             Statement:
+               - Effect: Allow
+                 Action: sts:AssumeRoleWithWebIdentity
+                 Principal:
+                   Federated: !Ref IDCProvider
+                 Condition:
+                   StringLike:
+                     token.actions.githubusercontent.com:sub: !Sub repo:${GithubRepoName}:*
+          MaxSessionDuration: 3600
+          Description: "Github Actions role"
+          Policies:
+          - PolicyName: 'CodeDeployRoleforGitHub-policy'
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+              - Effect: Allow
+                Action:
+                - 'codedeploy:Get*'
+                - 'codedeploy:Batch*'
+                - 'codedeploy:CreateDeployment'
+                - 'codedeploy:RegisterApplicationRevision'
+                - 'codedeploy:List*'
+                Resource:
+                  - !Sub 'arn:aws:codedeploy:*:${AWS::AccountId}:*'
+              - Effect: Allow
+                Action:
+                - 's3:putObject'
+                Resource: !Sub arn:aws:s3:::${WebappDeploymentBucket}/*                  
+  WebappDeploymentBucket:
+    Type: "AWS::S3::Bucket"
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+Outputs:
+  DeploymentBucket:
+    Description: Deployment bucket
+    Value: !Ref WebappDeploymentBucket
+  GithubIAMRoleArn:
+    Description: IAM role for GitHub
+    Value: !GetAtt GitHubIAMRole.Arn
