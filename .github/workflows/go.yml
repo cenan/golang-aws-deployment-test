@@ -9,12 +9,22 @@ on:
   pull_request:
     branches: [ "master" ]
 
+env:
+  AWS_REGION: us-east-1
+  S3BUCKET: codedeploystack-webappdeploymentbucket-pxwtjv1zijri
+
 jobs:
 
   build:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
+
+    - uses: aws-actions/configure-aws-credentials@v1
+      with:
+        role-to-assume: ${{ secrets.IAMROLE_GITHUB }}
+        role-session-name: GitHub-Action-Role
+        aws-region: ${{ env.AWS_REGION }}
 
     - name: Set up Go
       uses: actions/setup-go@v4
@@ -27,3 +37,6 @@ jobs:
 
     - name: Test
       run: go test -v ./...
+
+    - name: Upload artifact to s3
+      run: aws s3 cp golang-aws-deployment-test s3://${{ env.S3_BUCKET }}/
