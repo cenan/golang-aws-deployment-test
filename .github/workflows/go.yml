@@ -11,7 +11,7 @@ on:
 
 env:
   AWS_REGION: us-east-1
-  S3BUCKET: codedeploystack-webappdeploymentbucket-pxwtjv1zijri
+  S3_BUCKET: codedeploystack-webappdeploymentbucket-pxwtjv1zijri
 
 jobs:
 
