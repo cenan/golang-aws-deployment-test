@@ -4,11 +4,57 @@ Metadata:
   AWS::CloudFormation::Interface:
     ParameterGroups:
       - Label:
+          default: "VPC Configurations"
+        Parameters:
+          - VpcCIDR
+          - PublicSubnetCIDR
+          - PrivateSubnetCIDR
+      - Label:
+          default: "Autoscaling configurations"
+        Parameters:
+          - ImageId
+          - InstanceType
+          - AutoScalingGroupMinSize
+          - AutoScalingGroupMaxSize
+          - AutoScalingGroupDesiredCapacity
+      - Label:
           default: GitHub Configuration
         Parameters:
           - GithubRepoName
           - ThumbprintList
 Parameters:
+  VpcCIDR:
+    Type: String
+    Default: 10.192.0.0/16
+    Description: "The CIDR block for the VPC."
+  PublicSubnetCIDR:
+    Type: String
+    Default: 10.192.10.0/24
+    Description: "The CIDR block for the public subnet."
+  PrivateSubnetCIDR:
+    Type: String
+    Default: 10.192.20.0/24
+    Description: "The CIDR block for the private subnet."
+  ImageId:
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2'
+    Description: "The Amazon EC2 Linux instance Amazon Machine Image (AMI), which designates the configuration of the new instance."
+  InstanceType:
+    Type: String
+    Default: t2.medium
+    Description: The type of Amazon EC2 Linux instances that will be launched for this project.
+  AutoScalingGroupMinSize:
+    Type: Number
+    Default: 2
+    Description: "Enter the Min Size for the Auto Scaling Group"
+  AutoScalingGroupMaxSize:
+    Type: Number
+    Default: 2
+    Description: "Enter the Max Size for the Auto Scaling Group"
+  AutoScalingGroupDesiredCapacity:
+    Type: Number
+    Default: 2
+    Description: "Enter the Max Size for the Auto Scaling Group"
   ThumbprintList:
     Type: String
     Default: 6938fd4d98bab03faadb97b34396831e3780aea1
@@ -16,7 +62,123 @@ Parameters:
   GithubRepoName:
     Type: String 
     Description: GitHub repository name in format "username/reponame" 
+
 Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCIDR
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref VPC
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 0, !GetAZs ]
+      CidrBlock: !Ref PublicSubnetCIDR
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: Public Subnet
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 0, !GetAZs ]
+      CidrBlock: !Ref PrivateSubnetCIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: Private Subnet
+
+  NatGateway1EIP:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+
+  NatGateway1:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGateway1EIP.AllocationId
+      SubnetId: !Ref PublicSubnet1
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+  DefaultPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet
+
+  PrivateRouteTable1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VP
+
+  DefaultPrivateRoute1:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable1
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway1
+
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable1
+      SubnetId: !Ref PrivateSubnet1
+
+  WebappRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      Path: "/"
+      RoleName: WebappRole
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Principal:
+              Service:
+                - "ec2.amazonaws.com"
+                - "codedeploy.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AmazonSSMFullAccess'
+      Policies:
+        -
+          PolicyName: "allow-webapp-deployment-bucket-policy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              -
+                Effect: "Allow"
+                Action: 
+                - "s3:getObject"
+                Resource: !Sub arn:aws:s3:::${WebappDeploymentBucket}/*
   IDCProvider:
       Type: AWS::IAM::OIDCProvider
       Properties:
@@ -59,6 +221,46 @@ Resources:
                 Action:
                 - 's3:putObject'
                 Resource: !Sub arn:aws:s3:::${WebappDeploymentBucket}/*                  
+  WebappApplication:
+    Type: "AWS::CodeDeploy::Application"
+    Properties:
+      ApplicationName: CodeDeployAppNameWithASG
+  WebappDeploymentGroup:
+    Type: "AWS::CodeDeploy::DeploymentGroup"
+    Properties:
+      ApplicationName: !Ref WebappApplication
+      ServiceRoleArn: !GetAtt CodeDeployRole.Arn
+      DeploymentConfigName: CodeDeployDefault.OneAtATime
+      DeploymentGroupName: CodeDeployGroupName
+      AutoRollbackConfiguration:
+          Enabled: true
+          Events:
+            - DEPLOYMENT_FAILURE
+            - DEPLOYMENT_STOP_ON_REQUEST
+
+      AutoScalingGroups:
+      - Ref: AutoScalingGroup
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: allow access to ALB from internet
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 8080
+        ToPort: 8080
+        CidrIp: 0.0.0.0/0
+  WebappSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: allow access to Webapp from ALB
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 8080
+        ToPort: 8080
+        SourceSecurityGroupId:
+          Ref: ALBSecurityGroup
   WebappDeploymentBucket:
     Type: "AWS::S3::Bucket"
     Properties:
@@ -67,6 +269,117 @@ Resources:
         BlockPublicPolicy: true
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
+  CodeDeployRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Principal:
+              Service:
+                - "codedeploy.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Path: "/"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSCodeDeployRole
+      Policies:
+        -
+          PolicyName: allow-autoscaling
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              -
+                Effect: Allow
+                Action:
+                  - ec2:RunInstances
+                  - ec2:CreateTags
+                  - iam:PassRole
+                Resource:
+                  - !Sub 'arn:aws:codedeploy:*:${AWS::AccountId}:*'
+  WebappInstanceProfile:
+    Type: "AWS::IAM::InstanceProfile"
+    Properties:
+      Roles:
+        - Ref: WebappRole
+
+  WebappLaunchConfig:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      AssociatePublicIpAddress: true
+      ImageId:
+        Ref: ImageId
+      InstanceType: 
+        Ref: InstanceType
+      SecurityGroups:
+        - Ref: WebappSecurityGroup
+      IamInstanceProfile:
+        Ref: WebappInstanceProfile
+      UserData:
+        "Fn::Base64":
+          !Sub |
+              #!/bin/bash
+
+              yum install ruby -y
+              wget https://aws-codedeploy-${AWS::Region}.s3.${AWS::Region}.amazonaws.com/latest/install
+              chmod +x ./install
+              ./install auto
+              cd /tmp
+              sudo yum install -y https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/linux_amd64/amazon-ssm-agent.rpm
+              sudo systemctl enable amazon-ssm-agent
+              sudo systemctl start amazon-ssm-agent
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      HealthCheckType: ELB
+      HealthCheckGracePeriod: 300
+      DesiredCapacity: !Ref AutoScalingGroupDesiredCapacity
+      MinSize: !Ref AutoScalingGroupMinSize
+      MaxSize: !Ref AutoScalingGroupMaxSize
+      LaunchConfigurationName:
+        Ref: WebappLaunchConfig
+      VPCZoneIdentifier:
+        - Ref: PrivateSubnet1 
+      TargetGroupARNs:
+        - Ref: ALBTargetGroup
+      Tags:
+        - Key: Name
+          Value: webapp-example
+          PropagateAtLaunch: true
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        -
+          Type: forward
+          TargetGroupArn:
+            Ref: ALBTargetGroup
+      LoadBalancerArn:
+        Ref: ApplicationLoadBalancer
+      Port: 8080
+      Protocol: HTTP
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    DependsOn: InternetGateway
+    Properties:
+      Scheme: internet-facing
+      Subnets:
+        - Ref: PublicSubnet1
+      SecurityGroups:
+        - Ref: ALBSecurityGroup
+  ALBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 10
+      UnhealthyThresholdCount: 2
+      HealthyThresholdCount: 2
+      HealthCheckPath: "/"
+      Port: 8080
+      Protocol: HTTP
+      VpcId: !Ref VPC
+
 Outputs:
   DeploymentBucket:
     Description: Deployment bucket
