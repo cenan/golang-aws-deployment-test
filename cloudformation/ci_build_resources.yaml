@@ -17,6 +17,35 @@ Parameters:
     Type: String 
     Description: GitHub repository name in format "username/reponame" 
 Resources:
+  WebappRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      Path: "/"
+      RoleName: WebappRole
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Principal:
+              Service:
+                - "ec2.amazonaws.com"
+                - "codedeploy.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AmazonSSMFullAccess'
+      Policies:
+        -
+          PolicyName: "allow-webapp-deployment-bucket-policy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              -
+                Effect: "Allow"
+                Action: 
+                - "s3:getObject"
+                Resource: !Sub arn:aws:s3:::${WebappDeploymentBucket}/*
   IDCProvider:
       Type: AWS::IAM::OIDCProvider
       Properties:
@@ -67,6 +96,11 @@ Resources:
         BlockPublicPolicy: true
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
+  WebappInstanceProfile:
+    Type: "AWS::IAM::InstanceProfile"
+    Properties:
+      Roles:
+        - Ref: WebappRole
 Outputs:
   DeploymentBucket:
     Description: Deployment bucket
