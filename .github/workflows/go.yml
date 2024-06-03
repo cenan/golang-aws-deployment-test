@@ -5,9 +5,9 @@ name: Go
 
 on:
   push:
-    branches: [ "x" ]
+    branches: [ "master" ]
   pull_request:
-    branches: [ "x" ]
+    branches: [ "master" ]
 
 env:
   AWS_REGION: us-east-1
